@@ -1,0 +1,498 @@
+{
+  "datasets": [
+    {
+      "name": "187ee899",
+      "displayName": "KPIs_Mensuales",
+      "queryLines": [
+        "\r\n",
+        "WITH resumen AS (\r\n",
+        "    SELECT\r\n",
+        "        DATE_TRUNC('MONTH', d.fecha) AS mes,\r\n",
+        "        COUNT(*) AS total_pedidos,\r\n",
+        "        COUNT(DISTINCT p.id_cliente_unico) AS clientes_unicos,\r\n",
+        "\r\n",
+        "        SUM(\r\n",
+        "            CASE WHEN p.tiene_detalle = 1\r\n",
+        "            THEN p.importe_articulos ELSE 0 END\r\n",
+        "        ) AS ingresos_productos,\r\n",
+        "\r\n",
+        "        SUM(\r\n",
+        "            CASE WHEN p.tiene_detalle = 1\r\n",
+        "            THEN 1 ELSE 0 END\r\n",
+        "        ) AS pedidos_con_venta,\r\n",
+        "\r\n",
+        "        SUM(\r\n",
+        "            CASE WHEN p.tiene_detalle = 1\r\n",
+        "            THEN p.cantidad_articulos ELSE 0 END\r\n",
+        "        ) AS articulos_vendidos\r\n",
+        "\r\n",
+        "    FROM catalog_dev.golden.fact_pedidos p\r\n",
+        "\r\n",
+        "    INNER JOIN catalog_dev.golden.dim_fecha d\r\n",
+        "        ON p.id_fecha = d.id_fecha\r\n",
+        "\r\n",
+        "    GROUP BY DATE_TRUNC('MONTH', d.fecha)\r\n",
+        ")\r\n",
+        "\r\n",
+        "SELECT\r\n",
+        "    DATE_FORMAT(mes, 'yyyy-MM') AS mes,\r\n",
+        "    total_pedidos,\r\n",
+        "    clientes_unicos,\r\n",
+        "    ingresos_productos,\r\n",
+        "    pedidos_con_venta,\r\n",
+        "    articulos_vendidos,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        ingresos_productos /\r\n",
+        "        NULLIF(pedidos_con_venta, 0),\r\n",
+        "        2\r\n",
+        "    ) AS ticket_promedio,\r\n",
+        "\r\n",
+        " \r\n",
+        "CASE\r\n",
+        "    WHEN pedidos_con_venta >= 500\r\n",
+        "     AND LAG(pedidos_con_venta) OVER (ORDER BY mes) >= 500\r\n",
+        "     AND MONTHS_BETWEEN(\r\n",
+        "         mes,\r\n",
+        "         LAG(mes) OVER (ORDER BY mes)\r\n",
+        "     ) = 1\r\n",
+        "    THEN ROUND(\r\n",
+        "        100.0 * (\r\n",
+        "            ingresos_productos\r\n",
+        "            - LAG(ingresos_productos) OVER (ORDER BY mes)\r\n",
+        "        ) /\r\n",
+        "        NULLIF(\r\n",
+        "            LAG(ingresos_productos) OVER (ORDER BY mes),\r\n",
+        "            0\r\n",
+        "        ),\r\n",
+        "        2\r\n",
+        "    )\r\n",
+        "    ELSE NULL\r\n",
+        "END AS crecimiento_mensual_pct\r\n",
+        "\r\n",
+        "\r\n",
+        "FROM resumen\r\n",
+        "WHERE mes >= DATE '2017-01-01'\r\n",
+        "  AND mes < DATE '2018-09-01'\r\n",
+        "ORDER BY mes;"
+      ]
+    },
+    {
+      "name": "843f3da8",
+      "displayName": "KPIs_Generales",
+      "queryLines": [
+        "\r\n",
+        "SELECT\r\n",
+        "    ROUND(\r\n",
+        "        SUM(\r\n",
+        "            CASE\r\n",
+        "                WHEN tiene_detalle = 1\r\n",
+        "                THEN COALESCE(importe_articulos, 0)\r\n",
+        "                ELSE 0\r\n",
+        "            END\r\n",
+        "        ), 2\r\n",
+        "    ) AS ingresos_totales,\r\n",
+        "\r\n",
+        "    COUNT(*) AS total_pedidos,\r\n",
+        "\r\n",
+        "    COUNT(DISTINCT id_cliente_unico) AS clientes_unicos,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        SUM(\r\n",
+        "            CASE\r\n",
+        "                WHEN tiene_detalle = 1\r\n",
+        "                THEN COALESCE(importe_articulos, 0)\r\n",
+        "                ELSE 0\r\n",
+        "            END\r\n",
+        "        )\r\n",
+        "        /\r\n",
+        "        NULLIF(\r\n",
+        "            SUM(\r\n",
+        "                CASE\r\n",
+        "                    WHEN tiene_detalle = 1 THEN 1\r\n",
+        "                    ELSE 0\r\n",
+        "                END\r\n",
+        "            ), 0\r\n",
+        "        ), 2\r\n",
+        "    ) AS ticket_promedio\r\n",
+        "\r\n",
+        "FROM catalog_dev.golden.fact_pedidos;\r\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "2e21e5f1",
+      "displayName": "01. Resumen Ejecutivo",
+      "layout": [
+        {
+          "widget": {
+            "name": "evolucion-mensual-de-ingresos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "187ee899",
+                  "fields": [
+                    {
+                      "name": "mes",
+                      "expression": "`mes`"
+                    },
+                    {
+                      "name": "sum(ingresos_productos)",
+                      "expression": "SUM(`ingresos_productos`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "`Evolución mensual de ingresos`",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "lineShape": "smooth"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "mes",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(ingresos_productos)",
+                  "displayName": "Ingresos",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ingresos-totales-1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "843f3da8",
+                  "fields": [
+                    {
+                      "name": "sum(ingresos_totales)",
+                      "expression": "SUM(`ingresos_totales`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "`Ingresos totales`",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(ingresos_totales)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "total-de-pedidos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "843f3da8",
+                  "fields": [
+                    {
+                      "name": "sum(total_pedidos)",
+                      "expression": "SUM(`total_pedidos`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Total de pedidos",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_pedidos)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "clientes-unicos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "843f3da8",
+                  "fields": [
+                    {
+                      "name": "sum(clientes_unicos)",
+                      "expression": "SUM(`clientes_unicos`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Clientes únicos",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(clientes_unicos)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ticket-promedio",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "843f3da8",
+                  "fields": [
+                    {
+                      "name": "sum(ticket_promedio)",
+                      "expression": "SUM(`ticket_promedio`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Ticket promedio",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(ticket_promedio)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "62f7d179",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "187ee899",
+                  "fields": [
+                    {
+                      "name": "mes",
+                      "expression": "`mes`"
+                    },
+                    {
+                      "name": "avg(ticket_promedio)",
+                      "expression": "AVG(`ticket_promedio`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "mes",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(ticket_promedio)",
+                  "displayName": "Ticket Promedio",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "crecimiento-mensual-de-ingresos-1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "187ee899",
+                  "fields": [
+                    {
+                      "name": "mes",
+                      "expression": "`mes`"
+                    },
+                    {
+                      "name": "avg(crecimiento_mensual_pct)",
+                      "expression": "AVG(`crecimiento_mensual_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "`Crecimiento mensual de ingresos (%)`",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "mes",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(crecimiento_mensual_pct)",
+                  "displayName": "Crecimiento Mensual %",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
