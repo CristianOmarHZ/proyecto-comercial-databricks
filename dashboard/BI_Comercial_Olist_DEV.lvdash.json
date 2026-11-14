@@ -118,6 +118,50 @@
         "\r\n",
         "FROM catalog_dev.golden.fact_pedidos;\r\n"
       ]
+    },
+    {
+      "name": "71975cb6",
+      "displayName": "Analisis_Categorias",
+      "queryLines": [
+        "\r\n",
+        "SELECT\r\n",
+        "    COALESCE(\r\n",
+        "        c.categoria_ingles,\r\n",
+        "        v.id_categoria,\r\n",
+        "        'Sin categoría'\r\n",
+        "    ) AS categoria,\r\n",
+        "\r\n",
+        "    COUNT(*) AS articulos_vendidos,\r\n",
+        "\r\n",
+        "    COUNT(DISTINCT v.id_pedido) AS pedidos,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        SUM(COALESCE(v.precio, 0)), 2\r\n",
+        "    ) AS ingresos_productos,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        AVG(v.precio), 2\r\n",
+        "    ) AS precio_promedio,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        SUM(COALESCE(v.valor_flete, 0)), 2\r\n",
+        "    ) AS importe_flete\r\n",
+        "\r\n",
+        "FROM catalog_dev.golden.fact_ventas v\r\n",
+        "\r\n",
+        "LEFT JOIN catalog_dev.golden.dim_categoria c\r\n",
+        "    ON v.id_categoria = c.id_categoria\r\n",
+        "\r\n",
+        "GROUP BY\r\n",
+        "    COALESCE(\r\n",
+        "        c.categoria_ingles,\r\n",
+        "        v.id_categoria,\r\n",
+        "        'Sin categoría'\r\n",
+        "    )\r\n",
+        "\r\n",
+        "ORDER BY ingresos_productos DESC\r\n",
+        "LIMIT 10;\r\n"
+      ]
     }
   ],
   "pages": [
@@ -187,7 +231,7 @@
             "x": 0,
             "y": 2,
             "width": 4,
-            "height": 5
+            "height": 7
           }
         },
         {
@@ -419,7 +463,7 @@
             "x": 4,
             "y": 2,
             "width": 4,
-            "height": 5
+            "height": 7
           }
         },
         {
@@ -481,6 +525,188 @@
             "x": 8,
             "y": 2,
             "width": 4,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "69d65669",
+      "displayName": "02. Productos y Categorías",
+      "layout": [
+        {
+          "widget": {
+            "name": "top-10-categorias-por-ingresos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "71975cb6",
+                  "fields": [
+                    {
+                      "name": "sum(ingresos_productos)",
+                      "expression": "SUM(`ingresos_productos`)"
+                    },
+                    {
+                      "name": "categoria",
+                      "expression": "`categoria`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Top 10 categorías por ingresos",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(ingresos_productos)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "categoria",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 5,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "articulos-vendidos-por-categoria",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "71975cb6",
+                  "fields": [
+                    {
+                      "name": "categoria",
+                      "expression": "`categoria`"
+                    },
+                    {
+                      "name": "sum(articulos_vendidos)",
+                      "expression": "SUM(`articulos_vendidos`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Artículos vendidos por categoría",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "categoria",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(articulos_vendidos)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 0,
+            "width": 7,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "precio-promedio-categoria-r",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "71975cb6",
+                  "fields": [
+                    {
+                      "name": "categoria",
+                      "expression": "`categoria`"
+                    },
+                    {
+                      "name": "sum(precio_promedio)",
+                      "expression": "SUM(`precio_promedio`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Precio promedio por categoría (R$)",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "categoria",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(precio_promedio)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 5,
+            "width": 7,
             "height": 5
           }
         }
