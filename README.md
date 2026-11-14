@@ -1,264 +1,120 @@
-# Proyecto comercial Olist — Ingeniería de Datos con Azure Databricks
+# Proyecto comercial Olist con Azure Databricks
 
-**Pipeline ETL end-to-end con arquitectura medallion (Raw → Bronze → Silver → Golden), Unity Catalog, Azure Data Lake Storage Gen2, PySpark, modelo dimensional, dashboard y CI/CD con GitHub Actions.**
+En este proyecto trabajé con los datos públicos de Olist, una plataforma de comercio electrónico de Brasil. El objetivo fue construir un proceso de ingeniería de datos que partiera de los archivos originales, los transformara en Databricks y dejara un modelo de datos preparado para analizar ventas, pedidos, clientes y productos.
 
-![Estado del despliegue](https://img.shields.io/badge/ETL_PROD-7%2F7_tareas_exitosas-2ea44f) ![Tablas](https://img.shields.io/badge/Delta-30_tablas-0b7285) ![Ambientes](https://img.shields.io/badge/Ambientes-DEV_%2B_PROD-4c6ef5)
+El trabajo incluye la carga y transformación con PySpark, almacenamiento en Azure Data Lake Storage Gen2, tablas Delta administradas mediante Unity Catalog, un dashboard comercial y el despliegue a producción desde GitHub Actions.
 
-> **Resultado verificado:** el workflow `WF_OLIST_PROD` completó sus siete tareas con estado **Succeeded** y se confirmó en el explorador de Unity Catalog la existencia de **9 tablas Bronze, 9 Silver y 12 Golden** dentro de `catalog_prod`. La ejecución observada duró **5 min 21 s** (13 de noviembre de 2026, según la interfaz de Databricks). El resultado de GitHub Actions también fue exitoso.
+## Datos utilizados
 
-## 1. Objetivo
+La fuente es el [Brazilian E-Commerce Public Dataset by Olist](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce), disponible en Kaggle. Se utilizaron sus nueve archivos CSV, con información de pedidos, artículos, clientes, productos, vendedores, pagos, reseñas, ubicaciones y categorías.
 
-Diseñar e implementar una solución reproducible de ingeniería de datos para analizar la actividad comercial de **Olist**, un conjunto público de comercio electrónico brasileño. El flujo integra nueve CSV de origen, aplica transformaciones con **PySpark**, organiza los resultados en Delta Lake y proporciona hechos y dimensiones para evaluar ventas, pedidos, clientes, productos, vendedores, pagos y satisfacción.
+Los archivos se cargaron en el contenedor `raw` de la cuenta de almacenamiento `adlsmartdata08100`. Databricks accede a ellos mediante una identidad administrada de Azure y una ubicación externa configurada en Unity Catalog.
 
-**Objetivos técnicos:**
+Los datos originales no están incluidos en el repositorio. El detalle de las fuentes, campos y cantidades de registros se encuentra en [datasets/README.md](datasets/README.md).
 
-- Conectar Databricks al origen Raw en ADLS Gen2 mediante **Managed Identity**, sin usar DBFS ni Volumes como fuente Raw.
-- Separar datos crudos, depurados y analíticos mediante las capas **Bronze, Silver y Golden**.
-- Crear y gobernar tablas externas Delta usando **Unity Catalog**.
-- Parametrizar los notebooks para ejecutar el mismo ETL en `catalog_dev` y `catalog_prod`.
-- Automatizar el despliegue, el workflow y su monitoreo mediante **GitHub Actions**.
-- Construir una primera visualización ejecutiva en Databricks AI/BI Dashboards.
+## Arquitectura y procesamiento
 
-## 2. Arquitectura
+El proceso sigue una arquitectura de tres capas. Los datos originales permanecen en Raw y las tablas de trabajo se almacenan en formato Delta.
 
 ```mermaid
-flowchart TD
-    A[Olist — 9 CSV originales] --> B[Azure Data Lake Storage Gen2 / raw]
-    MI[Managed Identity / Access Connector] -. acceso .-> B
-    B --> C[Databricks / PySpark]
-    C --> D[Bronze — 9 tablas Delta]
-    D --> E[Silver — 9 tablas Delta]
-    E --> F[Golden — 8 dimensiones + 4 hechos]
-    UC[Unity Catalog + External Locations] -. gobierno .-> D
-    UC -. gobierno .-> E
-    UC -. gobierno .-> F
-    F --> G[AI/BI Dashboard Olist]
-    H[GitHub — main] --> I[GitHub Actions / deploy-olist.yml]
-    I --> J[Databricks PROD / WF_OLIST_PROD]
-    J -. ejecuta .-> C
+flowchart LR
+    A[CSV de Olist] --> B[ADLS Gen2 / Raw]
+    B --> C[Bronze]
+    C --> D[Silver]
+    D --> E[Golden]
+    E --> F[Dashboard comercial]
+    G[Unity Catalog] -.-> C
+    G -.-> D
+    G -.-> E
 ```
 
-**Infraestructura utilizada**
+En **Bronze** se cargan los nueve archivos de origen. En **Silver** se realizan las conversiones de tipos, la limpieza y la preparación de las entidades que después se utilizarán en el análisis. En **Golden** se construye el modelo dimensional con ocho dimensiones y cuatro tablas de hechos.
 
-| Componente | Implementación |
-|---|---|
-| Workspace DEV | `adb-tf-comercial-dev` |
-| Workspace PROD | `adb-tf-comercial-prod` |
-| Cuenta de almacenamiento | `adlsmartdata08100` |
-| Contenedores ADLS Gen2 | `raw`, `bronze`, `silver`, `golden`, `metastore` |
-| Catálogos Unity Catalog | `catalog_dev`, `catalog_prod` |
-| Identidad para acceso al almacenamiento | Azure Access Connector con Managed Identity |
-| Clúster de ejecución PROD | `cluster_olist_prod`, Databricks Runtime 16.4 LTS |
-| Workflow PROD | `WF_OLIST_PROD` |
-| Dashboard inicial | `BI_Comercial_Olist_DEV` |
-
-La ruta de Raw tiene la forma `abfss://raw@adlsmartdata08100.dfs.core.windows.net/` y los CSV están en su raíz. Las rutas físicas Delta se mantienen segregadas por ambiente: por ejemplo, `abfss://silver@adlsmartdata08100.dfs.core.windows.net/dev/pedidos` y `.../prod/pedidos`.
-
-## 3. Datos de entrada
-
-**Origen:** [Brazilian E-Commerce Public Dataset by Olist — Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce).
-
-| Archivo CSV | Registros leídos | Tabla Bronze |
+| Capa | Tablas | Contenido |
 |---|---:|---|
-| `olist_orders_dataset.csv` | 99.441 | `orders` |
-| `olist_order_items_dataset.csv` | 112.650 | `order_items` |
-| `olist_customers_dataset.csv` | 99.441 | `customers` |
-| `olist_products_dataset.csv` | 32.951 | `products` |
-| `olist_sellers_dataset.csv` | 3.095 | `sellers` |
-| `olist_order_payments_dataset.csv` | 103.886 | `order_payments` |
-| `olist_order_reviews_dataset.csv` | 99.224 | `order_reviews` |
-| `olist_geolocation_dataset.csv` | 1.000.163 | `geolocation` |
-| `product_category_name_translation.csv` | 71 | `category_translation` |
-| **Total** | **1.550.922** | **9 fuentes** |
+| Bronze | 9 | Información procedente de los CSV |
+| Silver | 9 | Pedidos, ventas, clientes, productos, vendedores, pagos, reseñas, ubicaciones y categorías |
+| Golden | 12 | 8 dimensiones y 4 tablas de hechos |
 
-Los conteos son los verificados en la ingesta del proyecto; representan filas de cada archivo, **no compradores ni transacciones únicas**. El dataset y sus relaciones se describen con mayor detalle en [`datasets/README.md`](datasets/README.md). Los archivos originales permanecen en Azure Data Lake, sin duplicarse en este repositorio.
+Las dimensiones son `dim_fecha`, `dim_cliente`, `dim_producto`, `dim_categoria`, `dim_vendedor`, `dim_geografia`, `dim_metodo_pago` y `dim_estado_pedido`. Las tablas de hechos son `fact_ventas`, `fact_pedidos`, `fact_pagos` y `fact_resenas`.
 
-## 4. Diseño de datos: arquitectura medallion
+Se mantuvo la granularidad de cada tabla: por ejemplo, `fact_ventas` contiene el detalle por artículo, mientras que `fact_pedidos` contiene una fila por pedido. Esto permite calcular indicadores sin duplicar importes al combinar información de distintos niveles.
 
-### Bronze — 9 tablas
+## Ambientes de trabajo
 
-`orders`, `order_items`, `customers`, `products`, `sellers`, `order_payments`, `order_reviews`, `geolocation`, `category_translation`.
+El desarrollo se realizó en dos workspaces de Databricks:
 
-Se leen los CSV de Raw utilizando los esquemas Delta definidos previamente y se validan sus volúmenes antes de escribir. La carga utiliza rutas externas con separación por ambiente.
-
-### Silver — 9 tablas
-
-`pedidos`, `detalle_ventas`, `clientes`, `productos`, `vendedores`, `pagos`, `resenas`, `ubicaciones`, `categorias`.
-
-La capa incorpora tipificación, limpieza y estandarización de campos. La fuente geográfica se consolida por prefijo postal para evitar multiplicaciones de filas en las uniones analíticas. Se distingue `customer_id` (cliente asociado al pedido) de `customer_unique_id` (comprador recurrente).
-
-### Golden — 12 tablas: 8 dimensiones y 4 hechos
-
-| Tabla | Rol / granularidad |
-|---|---|
-| `dim_fecha` | Calendario analítico, clave `id_fecha` |
-| `dim_cliente` | Comprador único, clave `id_cliente_unico` |
-| `dim_producto` | Atributos de producto |
-| `dim_categoria` | Categoría y traducción |
-| `dim_vendedor` | Vendedor |
-| `dim_geografia` | Ubicación por código postal |
-| `dim_metodo_pago` | Medio de pago |
-| `dim_estado_pedido` | Estado del pedido |
-| `fact_ventas` | Una fila por artículo de pedido: (`id_pedido`, `id_item`) |
-| `fact_pedidos` | Una fila por pedido: `id_pedido` |
-| `fact_pagos` | Una fila por pago: (`id_pedido`, `secuencia_pago`) |
-| `fact_resenas` | Una fila por reseña asociada a pedido: (`id_resena`, `id_pedido`) |
-
-El resultado es un **modelo dimensional de hechos compartiendo dimensiones (constelación de hechos)**. Los hechos no deben unirse directamente entre sí a nivel de detalle cuando la cardinalidad provoque duplicidades: por ejemplo, `fact_pagos` y `fact_ventas` tienen granularidades distintas.
-
-## 5. Indicadores y resultados
-
-Valores históricos validados en el dashboard y el ETL:
-
-| Indicador | Resultado | Definición |
-|---|---:|---|
-| Ingresos de productos | **R$ 13.591.643,70** | Suma de `importe_articulos`; sin flete |
-| Pedidos registrados | **99.441** | Conteo de `fact_pedidos` |
-| Clientes únicos | **96.096** | Distintos `id_cliente_unico` |
-| Ticket promedio | **R$ 137,75** | Ingresos de productos / pedidos con detalle de venta |
-
-**Aclaraciones analíticas:** los ingresos de productos no son necesariamente equivalentes a los pagos recibidos; tampoco incluyen el flete. El ticket medio no se calcula dividiendo entre líneas de pedido. La métrica `entrega_a_tiempo` solo es interpretable cuando existe una entrega efectiva. Para crecimientos mensuales se excluyeron comparaciones de baja actividad y se acotó la visualización principal a enero de 2017–agosto de 2018, sin borrar registros de origen.
-
-### Dashboard
-
-Archivo exportado: [`dashboard/BI_Comercial_Olist_DEV.lvdash.json`](dashboard/BI_Comercial_Olist_DEV.lvdash.json).
-
-La versión exportada incluye **dos páginas y diez visualizaciones**: **`01. Resumen Ejecutivo`** (cuatro tarjetas KPI y tres gráficos: ingresos mensuales, ticket promedio mensual y crecimiento mensual) y **`02. Productos y Categorías`** (tres gráficos: Top 10 categorías por ingresos, artículos vendidos y precio promedio por categoría). Los datasets SQL son `KPIs_Mensuales`, `KPIs_Generales` y `Analisis_Categorias`. Las **tarjetas resumen muestran el histórico completo**; los gráficos mensuales usan el rango de análisis descrito arriba. Antes de implementar filtros compartidos, no se deben interpretar ambos bloques como si siempre representaran el mismo período.
-
-## 6. Ejecución en DEV y PROD
-
-| Ambiente | Catálogo | Ubicación física de las capas |
+| Ambiente | Workspace | Catálogo |
 |---|---|---|
-| DEV | `catalog_dev` | `bronze/dev`, `silver/dev`, `golden/dev` |
-| PROD | `catalog_prod` | `bronze/prod`, `silver/prod`, `golden/prod` |
+| Desarrollo | `adb-tf-comercial-dev` | `catalog_dev` |
+| Producción | `adb-tf-comercial-prod` | `catalog_prod` |
 
-Los notebooks reciben el parámetro `catalogo`. En producción el workflow envía **`catalogo=catalog_prod`**, en lugar de utilizar el valor predeterminado de desarrollo.
+Las tablas también se separaron físicamente por ambiente en ADLS Gen2, utilizando las rutas `/dev/` y `/prod/` en los contenedores de Bronze, Silver y Golden.
 
-**Orden de ejecución del workflow** (`proceso/`):
+Los notebooks aceptan el parámetro `catalogo`, de modo que el mismo procesamiento puede ejecutarse sobre uno u otro catálogo sin cambiar las consultas manualmente.
 
-1. `1.Preparacion_Ambiente.ipynb` — catálogo, esquemas, ubicaciones y DDL.
-2. `2.Ingest_Bronze.ipynb` — carga de nueve CSV a Bronze.
-3. `3.Transform_Silver.ipynb` — tipificación y transformación a Silver.
-4. `4.Transform_Golden_Dimensiones.ipynb` — ocho dimensiones.
-5. `5.Transform_Golden_Hechos.ipynb` — cuatro tablas de hechos.
-6. `6.Validacion_Modelo_KPIs.ipynb` — conciliaciones y controles de calidad.
-7. `7.Grants_Medallion.ipynb` — permisos de Unity Catalog.
+## Ejecución del ETL y despliegue
 
-**Primera ejecución PROD:** el workflow `WF_OLIST_PROD` finalizó correctamente con **7/7 tareas exitosas** y duración **5 min 21 s**. Unity Catalog mostró **30 tablas en producción** (9/9/12). Los 30 objetos verificados corresponden a sus tablas; las cifras de linaje de Databricks son métricas distintas y no sustituyen la comprobación del inventario.
+Los notebooks están en la carpeta [`proceso/`](proceso/) y se ejecutan en este orden:
 
-## 7. GitHub Actions: CI/CD
+1. `1.Preparacion_Ambiente.ipynb`: preparación del catálogo, esquemas y tablas.
+2. `2.Ingest_Bronze.ipynb`: lectura de los nueve CSV y carga a Bronze.
+3. `3.Transform_Silver.ipynb`: limpieza y transformación de los datos.
+4. `4.Transform_Golden_Dimensiones.ipynb`: construcción de las ocho dimensiones.
+5. `5.Transform_Golden_Hechos.ipynb`: construcción de las cuatro tablas de hechos.
+6. `6.Validacion_Modelo_KPIs.ipynb`: revisión de tablas, relaciones e indicadores.
+7. `7.Grants_Medallion.ipynb`: configuración de permisos.
 
-Workflow: [`.github/workflows/deploy-olist.yml`](.github/workflows/deploy-olist.yml).
+Para el despliegue utilicé [GitHub Actions](.github/workflows/deploy-olist.yml). Cuando se actualizan los notebooks de `proceso/` o el archivo del workflow en la rama `main`, la automatización importa los notebooks en el workspace de producción, actualiza el job `WF_OLIST_PROD` y ejecuta las tareas en secuencia con `catalogo=catalog_prod`.
 
-- Disparador automático al publicar cambios en `main` que afecten `proceso/**` o el propio YAML; también admite ejecución manual.
-- Verificación de la estructura de notebooks y conexión a las APIs de Databricks.
-- Despliegue de los **siete notebooks** en el workspace PROD.
-- Obtención del clúster `cluster_olist_prod` y creación/actualización del job `WF_OLIST_PROD`.
-- Definición de dependencias secuenciales, envío del parámetro `catalogo=catalog_prod` y lanzamiento del job.
-- Seguimiento de la ejecución hasta su resultado final, con error del pipeline si una tarea falla.
+El 13 de noviembre de 2026 se realizó una ejecución completa en producción. Las siete tareas finalizaron correctamente en **5 minutos y 21 segundos**, y el catálogo de producción quedó con **30 tablas Delta**: 9 Bronze, 9 Silver y 12 Golden.
 
-El clúster es existente y se controla su apagado para evitar consumos innecesarios. La programación incorporada al job queda **en pausa** por defecto; la ejecución inicial se realizó desde el proceso de despliegue. No se requiere mantener un clúster encendido permanentemente.
+El job tiene su programación automática en pausa. Para este proyecto se ejecutó durante el despliegue, sin necesidad de mantener el clúster encendido permanentemente.
 
-**Secrets utilizados (solo nombres; nunca valores):** `DATABRICKS_ORIGIN_HOST`, `DATABRICKS_ORIGIN_TOKEN`, `DATABRICKS_DEST_HOST`, `DATABRICKS_DEST_TOKEN`. Se almacenan en GitHub Actions Secrets y no deben copiarse a archivos versionados.
+## Dashboard comercial
 
-## 8. Seguridad y gobernanza
+El dashboard se desarrolló con Databricks AI/BI Dashboards y está exportado en [`dashboard/BI_Comercial_Olist_DEV.lvdash.json`](dashboard/BI_Comercial_Olist_DEV.lvdash.json).
 
-Se utiliza Unity Catalog con identidades y grupos de nivel cuenta:
+### Resumen ejecutivo
 
-| Grupo | DEV: permisos configurados |
-|---|---|
-| `grp_olist_ingenieria` | `USE CATALOG`; `USE SCHEMA`, `SELECT`, `MODIFY`, `CREATE TABLE` sobre Bronze, Silver y Golden |
-| `grp_olist_analistas` | `USE CATALOG`; `USE SCHEMA`, `SELECT` sobre Golden |
+La primera página muestra indicadores generales de la operación y gráficos de evolución mensual. Los valores del histórico son:
 
-Los permisos DEV fueron verificados mediante `SHOW GRANTS`. Existe un notebook de grants específico dentro del workflow de PROD. **La prueba de permisos mediante sesiones de usuarios de cada grupo es independiente de la comprobación de los GRANT y no se presenta aquí como realizada.**
+| Indicador | Valor |
+|---|---:|
+| Ingresos por productos | R$ 13.591.643,70 |
+| Pedidos | 99.441 |
+| Clientes únicos | 96.096 |
+| Ticket promedio | R$ 137,75 |
 
-Se utiliza **Managed Identity / External Locations** para leer Raw; no se publican secretos ni claves de ADLS. No copiar los ejemplos didácticos de autenticación con secretos incrustados al repositorio final.
+Los ingresos corresponden a los productos vendidos, sin incluir el flete. Los gráficos mensuales se concentran en el período de enero de 2017 a agosto de 2018; las tarjetas superiores muestran los datos del histórico completo.
 
-## 9. Validación y controles
+![Dashboard: Resumen Ejecutivo](evidencias/Captura%20de%20pantalla%202026-11-13%20233852.png)
 
-- Comparación del número de filas de cada CSV respecto al volumen esperado.
-- Verificación de tablas Bronze, Silver y Golden.
-- Control de unicidad de claves de hechos y dimensiones.
-- Conciliación de importes entre líneas de artículos y pedidos.
-- Validación de relaciones entre pedidos, clientes, artículos, vendedores y productos.
-- Verificación de KPIs del dashboard a partir de las tablas Golden.
-- Comprobación de la ejecución secuencial de los siete notebooks en PROD.
+### Productos y categorías
 
-**Estado demostrado en PROD:** ejecución exitosa del workflow y existencia de las 30 tablas en Unity Catalog. Para auditorías adicionales pueden revisarse las salidas de la tarea `validacion` y los recuentos de cada tabla.
+La segunda página permite comparar las diez categorías con mayores ingresos, la cantidad de artículos vendidos y el precio promedio de cada categoría.
 
-## 10. Reversión y recuperación
+![Dashboard: Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png)
 
-La carpeta [`reversion/`](reversion/) documenta un **plan de contingencia desactivado por defecto**. Distinguir entre:
+El JSON conserva las consultas y visualizaciones de ambas páginas. Las consultas del dashboard hacen referencia a `catalog_dev`, que fue el ambiente utilizado para construirlo.
 
-1. **Limpieza de un primer despliegue fallido:** identificar los objetos creados exclusivamente por ese despliegue y retirarlos de manera controlada.
-2. **Regresar a una versión anterior del código:** recuperar el commit estable desde Git y redeplegar.
-3. **Recuperar datos Delta:** consultar `DESCRIBE HISTORY` y restaurar una versión anterior únicamente si los archivos y las versiones necesarias siguen disponibles.
-4. **Reconstrucción total:** volver a preparar las tablas y ejecutar el ETL desde los CSV originales de Raw cuando una restauración no sea aplicable.
+## Seguridad y validaciones
 
-**Advertencia:** el notebook actual de reversión se mantiene en modo simulación. No equivale a un mecanismo de restauración automática ni se debe ejecutar una eliminación indiscriminada de las 30 tablas existentes en PROD.
+El acceso al almacenamiento se configuró con Managed Identity y External Locations. En Unity Catalog se definieron permisos para dos grupos: `grp_olist_ingenieria`, con acceso de trabajo sobre las capas, y `grp_olist_analistas`, con permisos de lectura sobre Golden.
 
-## 11. Organización del repositorio
+Durante el procesamiento se incorporaron validaciones de cantidad de registros, claves, relaciones entre entidades y conciliación de indicadores. También se incluyó una revisión de permisos con `SHOW GRANTS`.
 
-```text
-proyecto-comercial-databricks/
-├── .github/
-│   └── workflows/
-│       └── deploy-olist.yml
-├── PrepAmb/                 # Preparación y DDL de referencia en DEV
-├── proceso/                 # Siete notebooks desplegados y ejecutados en PROD
-├── seguridad/               # Configuración de grants DEV
-├── reversion/               # Plan de contingencia seguro
-├── datasets/                # Documentación de fuentes Olist
-│   └── README.md
-├── dashboard/               # Dashboard AI/BI exportado en JSON
-├── evidencias/              # Arquitectura y capturas reales de ejecución
-├── certificaciones/         # Certificaciones verificables, si se aportan
-└── README.md                # Documento principal del proyecto
-```
+La carpeta [`reversion/`](reversion/) contiene una simulación del procedimiento de contingencia. No ejecuta eliminaciones de las tablas de producción ni representa una restauración automática. Para recuperar una versión anterior del código se puede utilizar el historial de Git; para los datos, la estrategia dependería del historial Delta disponible o de una nueva ejecución desde Raw.
 
-## 12. Evidencias y verificación de la entrega
+## Archivos del repositorio
 
-El diagrama de arquitectura **está incluido como Mermaid en la sección 2** de este README; no depende de una imagen externa.
+- [`PrepAmb/`](PrepAmb/): notebook de preparación del ambiente de desarrollo.
+- [`proceso/`](proceso/): notebooks del ETL y la validación.
+- [`seguridad/`](seguridad/): configuración de permisos en Unity Catalog.
+- [`reversion/`](reversion/): simulación del procedimiento de contingencia.
+- [`datasets/`](datasets/): descripción de los archivos de origen.
+- [`dashboard/`](dashboard/): exportación del dashboard en JSON.
+- [`evidencias/`](evidencias/): capturas del desarrollo y de los resultados.
+- [`.github/workflows/deploy-olist.yml`](.github/workflows/deploy-olist.yml): automatización del despliegue a producción.
 
-**Capturas incluidas en `evidencias/` (rama `main`):**
-
-- [Bronze DEV — 9 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193222.png).
-- [Silver DEV — 9 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193204.png).
-- [Golden DEV — 12 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193141.png).
-- [Linaje de datos capturado por Unity Catalog](evidencias/Captura%20de%20pantalla%202026-11-13%20193343.png).
-- [Dashboard — Resumen Ejecutivo](evidencias/Captura%20de%20pantalla%202026-11-13%20233852.png).
-- [Dashboard — Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png).
-
-El resultado de **GitHub Actions** y el workflow **`WF_OLIST_PROD`** se verificó con estado exitoso, pero las capturas específicas de ambos **no están aún incluidas en el ZIP revisado**. Deben agregarse como evidencias si están disponibles; el historial de GitHub Actions permite comprobar el despliegue desde el repositorio.
-
-Ver también el [índice de capturas](evidencias/README.md) y la [acreditación Databricks Fundamentals con enlace de verificación](certificaciones/README.md).
-
-## Dashboard comercial Olist
-
-El dashboard fue desarrollado en Azure Databricks AI/BI
-y comprende dos páginas de análisis comercial.
-
-### 01. Resumen Ejecutivo
-
-Incluye ingresos totales, pedidos, clientes únicos,
-ticket promedio y evolución mensual de indicadores.
-
-![Resumen Ejecutivo](evidencias/Captura%20de%20pantalla%202026-11-13%20233852.png)
-
-### 02. Productos y Categorías
-
-Presenta el ranking de categorías por ingresos,
-artículos vendidos y precios promedio.
-
-![Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png)
-
-
-## Acreditación Databricks Academy
-
-Se adjunta la **Databricks Fundamentals Accreditation** (28 de septiembre de 2026), junto con el comprobante de finalización del curso y el enlace individual de verificación. Corresponde a una acreditación de Databricks Academy, no se presenta como una certificación profesional de nivel Associate o Professional.
-
-- [Evidencia y enlace de verificación oficial](certificaciones/README.md).
-
----
-
-**Entregable final:** repositorio público [CristianOmarHZ/proyecto-comercial-databricks](https://github.com/CristianOmarHZ/proyecto-comercial-databricks). El historial de la rama `main`, la ejecución de GitHub Actions y el job `WF_OLIST_PROD` constituyen la trazabilidad del despliegue presentado.
+El repositorio contiene el código y las evidencias del trabajo. Las credenciales de conexión se gestionaron con GitHub Actions Secrets y no forman parte de los archivos publicados.
