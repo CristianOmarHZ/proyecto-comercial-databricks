@@ -1,0 +1,233 @@
+name: CI-CD Olist - Databricks PROD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proceso/**'
+      - '.github/workflows/deploy-olist.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: databricks-olist-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy_and_run:
+    name: Deploy and run Olist PROD
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ORIGIN_HOST: ${{ secrets.DATABRICKS_ORIGIN_HOST }}
+      ORIGIN_TOKEN: ${{ secrets.DATABRICKS_ORIGIN_TOKEN }}
+      DEST_HOST: ${{ secrets.DATABRICKS_DEST_HOST }}
+      DEST_TOKEN: ${{ secrets.DATABRICKS_DEST_TOKEN }}
+      DEST_BASE: /Shared/proyecto-comercial-databricks/proceso
+      CLUSTER_NAME: cluster_olist_prod
+      JOB_NAME: WF_OLIST_PROD
+
+    steps:
+      - name: Checkout GitHub main
+        uses: actions/checkout@v4
+
+      - name: Validar archivos y herramientas
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v curl
+          command -v jq
+          command -v base64
+          for nb in \
+            '1.Preparacion_Ambiente' \
+            '2.Ingest_Bronze' \
+            '3.Transform_Silver' \
+            '4.Transform_Golden_Dimensiones' \
+            '5.Transform_Golden_Hechos' \
+            '6.Validacion_Modelo_KPIs' \
+            '7.Grants_Medallion'; do
+            if [[ ! -f "proceso/$nb.ipynb" && ! -f "proceso/$nb.py" ]]; then
+              echo "FALTA notebook proceso/$nb.ipynb (o .py) en la rama main"
+              exit 1
+            fi
+          done
+          echo 'OK: están los siete notebooks de proceso en main.'
+
+      - name: Comprobar conexión API DEV y PROD
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variable in ORIGIN_HOST ORIGIN_TOKEN DEST_HOST DEST_TOKEN; do
+            test -n "${!variable}" || { echo "FALTA secret: $variable"; exit 1; }
+          done
+          curl --fail --silent --show-error --retry 2 \
+            -H "Authorization: Bearer $ORIGIN_TOKEN" \
+            --get --data-urlencode 'path=/' \
+            "$ORIGIN_HOST/api/2.0/workspace/list" -o /dev/null
+          curl --fail --silent --show-error --retry 2 \
+            -H "Authorization: Bearer $DEST_TOKEN" \
+            --get --data-urlencode 'path=/' \
+            "$DEST_HOST/api/2.0/workspace/list" -o /dev/null
+          echo 'OK: APIs DEV y PROD accesibles.'
+
+      - name: Desplegar solo notebooks de proceso a PROD
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(jq -nc --arg path "$DEST_BASE" '{path:$path}')
+          curl --fail --silent --show-error --retry 2 \
+            -H "Authorization: Bearer $DEST_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "$payload" "$DEST_HOST/api/2.0/workspace/mkdirs" -o /dev/null
+          for nb in \
+            '1.Preparacion_Ambiente' \
+            '2.Ingest_Bronze' \
+            '3.Transform_Silver' \
+            '4.Transform_Golden_Dimensiones' \
+            '5.Transform_Golden_Hechos' \
+            '6.Validacion_Modelo_KPIs' \
+            '7.Grants_Medallion'; do
+            if [[ -f "proceso/$nb.ipynb" ]]; then
+              source_file="proceso/$nb.ipynb"
+              format='JUPYTER'
+            else
+              source_file="proceso/$nb.py"
+              format='SOURCE'
+            fi
+            encoded=$(base64 -w 0 "$source_file")
+            payload=$(jq -nc --arg path "$DEST_BASE/$nb" \
+              --arg format "$format" --arg content "$encoded" \
+              '{path:$path,format:$format,language:"PYTHON",overwrite:true,content:$content}')
+            curl --fail --silent --show-error --retry 2 \
+              -H "Authorization: Bearer $DEST_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d "$payload" "$DEST_HOST/api/2.0/workspace/import" -o /dev/null
+            echo "OK: desplegado $nb ($format)"
+          done
+
+      - name: Obtener clúster PROD existente
+        id: cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          clusters=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $DEST_TOKEN" \
+            "$DEST_HOST/api/2.0/clusters/list")
+          cluster_id=$(jq -er --arg n "$CLUSTER_NAME" \
+            '.clusters[]? | select(.cluster_name == $n) | .cluster_id' <<< "$clusters" | head -n 1)
+          test -n "$cluster_id"
+          echo "cluster_id=$cluster_id" >> "$GITHUB_OUTPUT"
+          echo "OK: clúster $CLUSTER_NAME encontrado ($cluster_id)."
+
+      - name: Crear o actualizar Databricks Workflow
+        id: job
+        shell: bash
+        env:
+          CLUSTER_ID: ${{ steps.cluster.outputs.cluster_id }}
+        run: |
+          set -euo pipefail
+          # Tareas dependientes; solo un clúster, catálogo PROD en todos los notebooks.
+          tasks='[]'
+          prev=''
+          for item in \
+            'preparacion:1.Preparacion_Ambiente' \
+            'bronze:2.Ingest_Bronze' \
+            'silver:3.Transform_Silver' \
+            'dimensiones:4.Transform_Golden_Dimensiones' \
+            'hechos:5.Transform_Golden_Hechos' \
+            'validacion:6.Validacion_Modelo_KPIs' \
+            'permisos:7.Grants_Medallion'; do
+            key=${item%%:*}
+            nb=${item#*:}
+            task=$(jq -nc \
+              --arg key "$key" --arg path "$DEST_BASE/$nb" \
+              --arg cluster "$CLUSTER_ID" --arg previous "$prev" \
+              '{task_key:$key,description:("Olist PROD - " + $key),
+                existing_cluster_id:$cluster,
+                notebook_task:{notebook_path:$path,source:"WORKSPACE",
+                  base_parameters:{catalogo:"catalog_prod"}},
+                timeout_seconds:3600,max_retries:0} |
+                if $previous != "" then .depends_on=[{task_key:$previous}] else . end')
+            tasks=$(jq -nc --argjson xs "$tasks" --argjson t "$task" '$xs + [$t]')
+            prev="$key"
+          done
+          settings=$(jq -nc --arg name "$JOB_NAME" --argjson tasks "$tasks" \
+            '{name:$name,format:"MULTI_TASK",tasks:$tasks,
+              max_concurrent_runs:1,timeout_seconds:14400,
+              schedule:{quartz_cron_expression:"0 0 8 * * ?",timezone_id:"America/Lima",pause_status:"PAUSED"},
+              tags:{environment:"production",project:"olist",deployment:"github_actions"}}')
+          jobs=$(curl --fail --silent --show-error -H "Authorization: Bearer $DEST_TOKEN" \
+            "$DEST_HOST/api/2.1/jobs/list?limit=100")
+          job_id=$(jq -r --arg n "$JOB_NAME" '.jobs[]? | select(.settings.name==$n) | .job_id' <<< "$jobs" | head -n 1)
+          if [[ -n "$job_id" ]]; then
+            payload=$(jq -nc --argjson id "$job_id" --argjson settings "$settings" \
+              '{job_id:$id,new_settings:$settings}')
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $DEST_TOKEN" -H 'Content-Type: application/json' \
+              -d "$payload" "$DEST_HOST/api/2.1/jobs/reset" -o /dev/null
+            echo "OK: workflow existente actualizado (ID $job_id)."
+          else
+            reply=$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $DEST_TOKEN" -H 'Content-Type: application/json' \
+              -d "$settings" "$DEST_HOST/api/2.1/jobs/create")
+            job_id=$(jq -er '.job_id' <<< "$reply")
+            echo "OK: workflow creado (ID $job_id)."
+          fi
+          echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+
+      - name: Validar configuración y ejecutar workflow PROD
+        id: run
+        shell: bash
+        env:
+          JOB_ID: ${{ steps.job.outputs.job_id }}
+        run: |
+          set -euo pipefail
+          details=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $DEST_TOKEN" \
+            --get --data-urlencode "job_id=$JOB_ID" \
+            "$DEST_HOST/api/2.1/jobs/get")
+          amount=$(jq -r '.settings.tasks | length' <<< "$details")
+          if [[ "$amount" != 7 ]]; then echo "ERROR: se esperaban 7 tareas; hay $amount"; exit 1; fi
+          echo "$details" | jq -r '.settings.tasks[] | .task_key + " -> " + .notebook_task.notebook_path'
+          payload=$(jq -nc --argjson id "$JOB_ID" '{job_id:$id}')
+          reply=$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $DEST_TOKEN" -H 'Content-Type: application/json' \
+            -d "$payload" "$DEST_HOST/api/2.1/jobs/run-now")
+          run_id=$(jq -er '.run_id' <<< "$reply")
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "RUN: $DEST_HOST/jobs/$JOB_ID/runs/$run_id"
+
+      - name: Monitorizar ejecución hasta finalizar
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          # Máximo 50 minutos; si se supera, el workflow puede seguir en Databricks.
+          for (( i=0; i<100; i++ )); do
+            state_json=$(curl --fail --silent --show-error --retry 2 \
+              -H "Authorization: Bearer $DEST_TOKEN" \
+              --get --data-urlencode "run_id=$RUN_ID" \
+              "$DEST_HOST/api/2.1/jobs/runs/get")
+            lifecycle=$(jq -r '.state.life_cycle_state // "UNKNOWN"' <<< "$state_json")
+            result=$(jq -r '.state.result_state // "PENDING"' <<< "$state_json")
+            echo "ESTADO: $lifecycle - $result"
+            echo "$state_json" | jq -r '.tasks[]? | "  " + .task_key + ": " + (.state.life_cycle_state // "PENDING") + " / " + (.state.result_state // "...")'
+            if [[ "$lifecycle" == 'TERMINATED' ]]; then
+              if [[ "$result" == 'SUCCESS' ]]; then
+                echo 'OK: ETL Olist PROD completado con éxito.'
+                exit 0
+              fi
+              echo "ERROR: workflow terminó con $result"
+              exit 1
+            fi
+            if [[ "$lifecycle" == 'INTERNAL_ERROR' || "$lifecycle" == 'SKIPPED' ]]; then
+              echo "ERROR: workflow en estado $lifecycle"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "TIEMPO EXCEDIDO: la ejecución puede continuar en Databricks. RUN_ID=$RUN_ID"
+          exit 1
