@@ -1,4 +1,4 @@
-# Proyecto comercial Olist con Azure Databricks
+# Procesamiento y análisis de ventas de Olist con Azure Databricks
 
 En este proyecto trabajé con los datos públicos de Olist, una plataforma de comercio electrónico de Brasil. El objetivo fue construir un proceso de ingeniería de datos que partiera de los archivos originales, los transformara en Databricks y dejara un modelo de datos preparado para analizar ventas, pedidos, clientes y productos.
 
@@ -118,3 +118,5 @@ La carpeta [`reversion/`](reversion/) contiene una simulación del procedimiento
 - [`.github/workflows/deploy-olist.yml`](.github/workflows/deploy-olist.yml): automatización del despliegue a producción.
 
 El repositorio contiene el código y las evidencias del trabajo. Las credenciales de conexión se gestionaron con GitHub Actions Secrets y no forman parte de los archivos publicados.
+
+Gracias por ver.
