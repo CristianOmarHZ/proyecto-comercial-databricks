@@ -123,7 +123,7 @@ Valores históricos validados en el dashboard y el ETL:
 
 Archivo exportado: [`dashboard/BI_Comercial_Olist_DEV.lvdash.json`](dashboard/BI_Comercial_Olist_DEV.lvdash.json).
 
-La versión entregada incluye una página **`01. Resumen Ejecutivo`** con cuatro tarjetas KPI y tres gráficos: evolución mensual de ingresos, evolución del ticket promedio mensual y crecimiento mensual de ingresos. Las **tarjetas resumen muestran el histórico completo**; los gráficos mensuales usan el rango de análisis descrito arriba. Antes de implementar filtros compartidos, no se deben interpretar ambos bloques como si siempre representaran el mismo período.
+La versión exportada incluye **dos páginas y diez visualizaciones**: **`01. Resumen Ejecutivo`** (cuatro tarjetas KPI y tres gráficos: ingresos mensuales, ticket promedio mensual y crecimiento mensual) y **`02. Productos y Categorías`** (tres gráficos: Top 10 categorías por ingresos, artículos vendidos y precio promedio por categoría). Los datasets SQL son `KPIs_Mensuales`, `KPIs_Generales` y `Analisis_Categorias`. Las **tarjetas resumen muestran el histórico completo**; los gráficos mensuales usan el rango de análisis descrito arriba. Antes de implementar filtros compartidos, no se deben interpretar ambos bloques como si siempre representaran el mismo período.
 
 ## 6. Ejecución en DEV y PROD
 
@@ -218,15 +218,20 @@ proyecto-comercial-databricks/
 
 ## 12. Evidencias y verificación de la entrega
 
-- **Arquitectura:** [`evidencias/arquitectura_olist.png`](evidencias/arquitectura_olist.png) — diagrama de referencia. Si ese archivo no se ha subido aún, incorporarlo a la rama `main`.
-- **GitHub Actions:** adjuntar captura real de la ejecución exitosa.
-- **Databricks workflow PROD:** adjuntar captura del gráfico de las siete tareas en verde y de la duración.
-- **Unity Catalog PROD:** adjuntar capturas de los esquemas Bronze (9), Silver (9) y Golden (12).
-- **Dashboard:** adjuntar captura real de `01. Resumen Ejecutivo`.
-- **Lineage (opcional):** adjuntar el linaje capturado por Unity Catalog.
+El diagrama de arquitectura **está incluido como Mermaid en la sección 2** de este README; no depende de una imagen externa.
 
-Las capturas deben corresponder a ejecuciones reales y guardarse en `evidencias/`. No es necesario incluir tokens, accesos privados ni pantallas con secretos. Completar o actualizar aquí los enlaces a las imágenes según los nombres definitivos cargados.
+**Capturas incluidas en `evidencias/` (rama `main`):**
 
+- [Bronze DEV — 9 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193222.png).
+- [Silver DEV — 9 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193204.png).
+- [Golden DEV — 12 tablas](evidencias/Captura%20de%20pantalla%202026-11-13%20193141.png).
+- [Linaje de datos capturado por Unity Catalog](evidencias/Captura%20de%20pantalla%202026-11-13%20193343.png).
+- [Dashboard — Resumen Ejecutivo](evidencias/Captura%20de%20pantalla%202026-11-13%20233852.png).
+- [Dashboard — Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png).
+
+El resultado de **GitHub Actions** y el workflow **`WF_OLIST_PROD`** se verificó con estado exitoso, pero las capturas específicas de ambos **no están aún incluidas en el ZIP revisado**. Deben agregarse como evidencias si están disponibles; el historial de GitHub Actions permite comprobar el despliegue desde el repositorio.
+
+Ver también el [índice de capturas](evidencias/README.md) y la [acreditación Databricks Fundamentals con enlace de verificación](certificaciones/README.md).
 
 ## Dashboard comercial Olist
 
@@ -246,6 +251,13 @@ Presenta el ranking de categorías por ingresos,
 artículos vendidos y precios promedio.
 
 ![Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png)
+
+
+## Acreditación Databricks Academy
+
+Se adjunta la **Databricks Fundamentals Accreditation** (28 de septiembre de 2026), junto con el comprobante de finalización del curso y el enlace individual de verificación. Corresponde a una acreditación de Databricks Academy, no se presenta como una certificación profesional de nivel Associate o Professional.
+
+- [Evidencia y enlace de verificación oficial](certificaciones/README.md).
 
 ---
 
