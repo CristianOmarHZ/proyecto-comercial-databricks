@@ -227,18 +227,25 @@ proyecto-comercial-databricks/
 
 Las capturas deben corresponder a ejecuciones reales y guardarse en `evidencias/`. No es necesario incluir tokens, accesos privados ni pantallas con secretos. Completar o actualizar aquí los enlaces a las imágenes según los nombres definitivos cargados.
 
-## 13. Cómo reproducir el proyecto
 
-1. Contar con una suscripción Azure, workspaces Databricks, Unity Catalog y permisos adecuados.
-2. Obtener los nueve CSV desde la fuente Kaggle y colocarlos **en la raíz del contenedor `raw`**.
-3. Configurar Access Connector con Managed Identity, la autorización de Azure Storage y las External Locations de las capas.
-4. Crear los GitHub Actions Secrets indicados y configurar el clúster de producción.
-5. Revisar `proceso/1.Preparacion_Ambiente.ipynb` para el entorno y verificar que el catálogo destino sea `catalog_prod`.
-6. Publicar una actualización del ETL en la rama `main` mediante Pull Request. El workflow desplegará y ejecutará los notebooks en orden.
-7. Confirmar el estado `Succeeded` del job `WF_OLIST_PROD`, las **30 tablas**, los controles del notebook de validación y la correcta lectura de Golden.
-8. Detener el cómputo si no se requiere otra ejecución.
+## Dashboard comercial Olist
 
-> **Uso académico:** la configuración, nombres de recursos y credenciales se deben adaptar a la propia cuenta. El dataset es público; los recursos Azure del autor no forman parte del repositorio y no permiten ejecución directa sin una infraestructura equivalente.
+El dashboard fue desarrollado en Azure Databricks AI/BI
+y comprende dos páginas de análisis comercial.
+
+### 01. Resumen Ejecutivo
+
+Incluye ingresos totales, pedidos, clientes únicos,
+ticket promedio y evolución mensual de indicadores.
+
+![Resumen Ejecutivo](evidencias/Captura%20de%20pantalla%202026-11-13%20233852.png)
+
+### 02. Productos y Categorías
+
+Presenta el ranking de categorías por ingresos,
+artículos vendidos y precios promedio.
+
+![Productos y Categorías](evidencias/Captura%20de%20pantalla%202026-11-13%20233915.png)
 
 ---
 
